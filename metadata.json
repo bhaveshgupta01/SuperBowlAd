@@ -1,0 +1,8 @@
+{
+  "name": "SuperBowl Viral Post Generator",
+  "description": "An AI-powered content creation suite for Super Bowl Sunday. Generate viral captions, high-octane sports images, and cinematic video highlights using the latest Gemini models.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
