@@ -74,10 +74,11 @@ export default function SimulationPage() {
         }),
       });
       const data = await res.json();
-      const timing = data.result === "WIN" ? "on time!" : "late reply";
-      const botText = data.code
-        ? `You got code: ${data.code} (${timing})`
-        : data.error || "No active campaign for the latest event.";
+      const botText =
+        data.message ??
+        (data.code
+          ? `You got code: ${data.code}`
+          : data.error || "No active campaign for the latest event.");
       setMessages((prev) => [
         ...prev,
         {
@@ -133,9 +134,10 @@ export default function SimulationPage() {
 
       <div className="flex-1 flex flex-col max-w-2xl mx-auto w-full px-4 py-6">
         <p className="text-sm text-zinc-500 text-center mb-4">
-          Simulate an Instagram user. When the admin triggers an event, reply
-          here within 45 seconds to get <strong>GOLD50</strong>, or later for{" "}
-          <strong>SILVER10</strong>.
+          Simulate an Instagram user. When a story drops, reply within 45
+          seconds — the first 10 fast replies win a <strong>GOLD</strong> code
+          (50% off); everyone else gets <strong>SILVER</strong> (10% off). One
+          play per story, codes are unique to you and expire in 24h.
         </p>
 
         {/* Chat area */}

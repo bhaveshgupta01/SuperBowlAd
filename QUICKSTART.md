@@ -7,14 +7,17 @@ npm install
 npm run dev
 ```
 
-Then walk the core flow:
+**Fastest demo — replay the real Super Bowl:**
 
-1. Open **http://localhost:3000/dashboard**
-2. Pick "Touchdown - Chiefs" → click **Simulate Event**
-3. Click **Generate Post** → edit the caption if you like → **Post to Instagram**
-4. Open **http://localhost:3000/simulation** in a second tab → you'll see the "New Story! Reply now!" toast
-5. Type any reply. Within 45 seconds of the event → code **GOLD50**. Later → **SILVER10**
-6. Back on the dashboard, click the post in **Past posts** to see its stats
+1. Open **http://localhost:3000/dashboard** → click **▶ Replay Super Bowl LX**. Real ESPN play-by-play streams in; each touchdown/field goal/interception auto-posts an AI-captioned story.
+2. Open **http://localhost:3000/simulation** in a second tab → wait for the "New Story! Reply now!" toast → reply fast. First 10 fast replies win a unique **GOLD** code (50% off); everyone else gets **SILVER** (10%). One play per story; codes expire in 24h.
+3. Back on the dashboard: paste your code into **Redeem a code** (the simulated register), then click the post in **Past posts** for the ROI funnel (replies, unique customers, gold cap usage, redemption rate, median reply speed).
+
+**Manual flow (no watcher):**
+
+1. On the dashboard, pick "Touchdown - Chiefs" → **Simulate Event**
+2. **Generate Post** → edit the caption if you like → **Post to Instagram**
+3. Reply on `/simulation` as above
 
 Also try **http://localhost:3000/demo** — a scripted multi-sport simulation (NFL, NBA, soccer, cricket) with caption generation and mock discount codes.
 
@@ -47,6 +50,20 @@ curl -X POST http://localhost:3000/api/generate-post \
 curl -X POST http://localhost:3000/api/instagram-webhook \
   -H "Content-Type: application/json" \
   -d "{\"userId\": \"u1\", \"message\": \"YES\", \"timestamp\": $(date +%s)}"
+
+# Start the Super Bowl LX replay (real ESPN play-by-play, auto-posting)
+curl -X POST http://localhost:3000/api/watcher \
+  -H "Content-Type: application/json" \
+  -d '{"action":"start","sport":"nfl","gameId":"401772988","mode":"replay","intervalSecs":15,"autoPost":true}'
+
+# Watcher status / stop
+curl http://localhost:3000/api/watcher
+curl -X POST http://localhost:3000/api/watcher \
+  -H "Content-Type: application/json" -d '{"action":"stop"}'
+
+# Validate & redeem a code minted by the webhook (works with zero config)
+curl -X POST http://localhost:3000/api/codes/validate \
+  -H "Content-Type: application/json" -d '{"code": "GOLD50-X7K2", "redeem": true}'
 
 # Live games (demo data unless real sports APIs enabled)
 curl "http://localhost:3000/api/sports/live?sport=nfl"

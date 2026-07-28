@@ -10,7 +10,8 @@ export async function GET(request: NextRequest) {
       | "cricket"
       | null;
 
-    const games = await getLiveGames(sport || undefined);
+    const forceReal = request.nextUrl.searchParams.get("real") === "1";
+    const games = await getLiveGames(sport || undefined, { forceReal });
 
     return NextResponse.json({
       success: true,

@@ -12,6 +12,8 @@ npm run lint     # ESLint check (.eslintrc.json extends next/core-web-vitals)
 
 No test suite exists. Manual testing uses the 3-step flow described below.
 
+**Never run `npm run build` while the dev server is running** — both write to `.next/` and the build corrupts the dev server's chunks (`Cannot find module './NNN.js'`). If it happens: stop the dev server, `rm -rf .next`, restart.
+
 ## Architecture
 
 **AdBlitz** is a Next.js 14 App Router app (TypeScript, Tailwind, Lucide React). It contains **two coexisting stacks** that share one design principle: the app must always work with zero configuration, and integrations light up only when their env vars are present.
@@ -27,13 +29,18 @@ All state lives in `lib/store.ts`, anchored on `globalThis` (Next dev compiles e
 
 Core pipeline:
 
-1. `POST /api/simulate-event` — creates a `GameEvent` in the store with the current Unix timestamp
-2. `POST /api/generate-post` — returns a caption: Gemini via `generateFromPrompt()` when `GEMINI_API_KEY` is set, template string otherwise; falls back to body payload when `store.ts` is a different worker instance
+1. Events enter the store either manually (`POST /api/simulate-event`) or via the **game watcher** (`lib/watcher.ts`, `/api/watcher`) which streams real ESPN play-by-play — live polling or replay of a finished game (featured: Super Bowl LX, game id 401772988). Emitted events are stamped with the *current* time, and with `autoPost` the watcher generates a caption and creates the post server-side.
+2. `POST /api/generate-post` — caption via shared `lib/captions.ts`: Gemini (`generateFromPrompt()`) when `GEMINI_API_KEY` is set, template otherwise; falls back to body payload when `store.ts` is a different worker instance
 3. `POST /api/posts` — saves a `Post` record and calls `setActivePostId()` — only one post is "active" at a time
 4. `/simulation` polls `GET /api/events?latest=1` every 2 seconds; fires a toast for 6 seconds on a new event
-5. User submits any message → `POST /api/instagram-webhook { userId, message, timestamp }` → `evaluateBet()` → returns code
+5. User submits any message → `POST /api/instagram-webhook { userId, message, timestamp }` → evaluated **against the active post's event** (not the newest raw event) → returns a unique code
 
-Discount logic (`lib/campaign-logic.ts`): reply within 45s of event → WIN → GOLD50; later → LATE → SILVER10. `evaluateBet(userReplyTime, eventTime)` takes Unix **second** timestamps (both `number`). The 45-second constant is `WIN_WINDOW_SECONDS`, module-level.
+Business rules (`lib/campaign-logic.ts` + webhook; from the 2026-07 market analysis):
+- Reply window (`scenario.winWindowSecs`, default 45s) anchors to the **post's `postedAt`**, falling back to event time when no post exists.
+- One play per user per event — repeats return the original code (`findBetByUserAndEvent`).
+- Gold winners capped per event (`scenario.winnerCap`, default 10); once hit, in-window replies get silver with a "sold out" message.
+- Codes are unique (`generateUniqueCode` → `GOLD50-X7K2`, alphabet excludes 0/O/1/I) and expire after `CODE_VALIDITY_MINS` (24h). `/api/codes/validate` validates/redeems against the in-memory bet registry when Supabase is unconfigured.
+- Timestamps are Unix **seconds** (`number`) everywhere.
 
 State shape (`lib/store.ts`): a single `globalThis.__adblitzStore` object holding four arrays (`gameEvents` capped at 50 newest-first, `bettingScenarios`, `userBets`, `posts`) plus the `activePostId` and `latestEventForSimulation` singletons. Two default `BettingScenario` records (touchdown + interception) are seeded at module import. This works in any single-process deployment but **not serverless/edge**, where each invocation gets a fresh runtime.
 
@@ -43,7 +50,7 @@ State shape (`lib/store.ts`): a single `globalThis.__adblitzStore` object holdin
 - `lib/auth.ts` — signup/signin + `businesses` profile CRUD
 - `lib/codes.ts` — nanoid discount codes with expiry/redemption in Supabase
 - `lib/gemini.ts` — `generateCaption()` (structured), `generateFromPrompt()` (raw, returns null on failure), template fallbacks. **Server-side only** — never import it in a client component; `GEMINI_API_KEY` is not `NEXT_PUBLIC`.
-- `lib/sports/` — adapter pattern: ESPN (NFL/NBA, real) + scripted demo data (4 sports). `NEXT_PUBLIC_DEMO_MODE` / `NEXT_PUBLIC_USE_REAL_SPORTS_API` pick the source.
+- `lib/sports/` — adapter pattern: ESPN (NFL/NBA, real) + scripted demo data (4 sports). `NEXT_PUBLIC_DEMO_MODE` / `NEXT_PUBLIC_USE_REAL_SPORTS_API` pick the source; `getLiveGames(sport, { forceReal: true })` (or `/api/sports/live?real=1`) bypasses the flags. ESPN events come from the **summary endpoint's play-by-play** (`summary?event=<gameId>`; NFL plays live in `drives.previous[].plays[]`, NBA in top-level `plays[]`), classified into touchdown/field_goal/interception/sack/fumble (NFL) or 3pointer/dunk/technical_foul (NBA) — the scoreboard endpoint has no plays. `lib/watcher.ts` state lives on `globalThis` like the store.
 - Routes: `/api/campaigns` (CRUD), `/api/predictions`, `/api/codes/validate`; pages: `/auth/*`, `/onboarding`, `/demo`
 - Schema: `SUPABASE_SCHEMA.sql` (multi-tenant with RLS)
 

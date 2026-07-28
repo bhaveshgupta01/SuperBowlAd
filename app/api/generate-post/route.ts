@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getGameEvents } from "@/lib/store";
+import { getGameEvents, getActiveScenarioForEventType } from "@/lib/store";
+import { buildPromptForEvent, templateCaptionForEvent } from "@/lib/captions";
 import { generateFromPrompt } from "@/lib/gemini";
+import { WIN_WINDOW_SECONDS } from "@/lib/campaign-logic";
 
 /**
  * POST /api/generate-post
@@ -38,17 +40,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const prompt = `Create an Instagram story caption for this live game moment: "${event.description}". Call to action: ask viewers to reply within 45 seconds to get a discount. Keep it short, punchy, and Super Bowl themed.`;
+    const windowSecs =
+      getActiveScenarioForEventType(event.type.toLowerCase())?.winWindowSecs ??
+      WIN_WINDOW_SECONDS;
 
-    const templates: Record<string, string> = {
-      touchdown: `🏈 TOUCHDOWN! ${event.description}\n\nReply within 45 seconds and we'll send you a discount code. Don't miss it! ⚡`,
-      interception: `😱 INTERCEPTION! ${event.description}\n\nReply in the next 45 seconds to grab your discount. Quick! 🔥`,
-      field_goal: `✅ Field goal! ${event.description}\n\nReply now (within 45 sec) for your exclusive code. 🎯`,
-    };
-    const type = event.type.toLowerCase();
-    const templateCaption = templates[type] ?? `${event.description}\n\nReply within 45 seconds for your discount code! ⚡`;
-
-    const caption = (await generateFromPrompt(prompt)) ?? templateCaption;
+    const prompt = buildPromptForEvent(event, windowSecs);
+    const caption =
+      (await generateFromPrompt(prompt)) ?? templateCaptionForEvent(event, windowSecs);
 
     return NextResponse.json({
       eventId: event.id,

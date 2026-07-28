@@ -49,10 +49,37 @@ interface Post {
 interface PostStats {
   postId: string;
   interactions: number;
+  uniqueUsers: number;
   gotDiscount: number;
   winCount: number;
   lateCount: number;
+  redeemed: { gold: number; silver: number; total: number };
+  redemptionRatePct: number;
+  medianReplyLatencySecs: number | null;
+  goldCap: { used: number; total: number } | null;
   usedPromoCode: { GOLD50: number; SILVER10: number };
+}
+
+interface WatcherStatus {
+  running: boolean;
+  config: {
+    sport: string;
+    gameId: string;
+    mode: string;
+    intervalSecs: number;
+    autoPost: boolean;
+    label?: string;
+  } | null;
+  emittedCount: number;
+  queueRemaining: number | null;
+  lastEvent: { description: string; at: number } | null;
+  lastError: string | null;
+}
+
+interface FeaturedReplay {
+  sport: string;
+  gameId: string;
+  label: string;
 }
 
 export default function DashboardPage() {
@@ -71,6 +98,16 @@ export default function DashboardPage() {
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
   const [postStats, setPostStats] = useState<PostStats | null>(null);
   const [postSuccessMessage, setPostSuccessMessage] = useState<string | null>(null);
+  // Game watcher
+  const [watcher, setWatcher] = useState<WatcherStatus | null>(null);
+  const [featuredReplay, setFeaturedReplay] = useState<FeaturedReplay | null>(null);
+  const [replaySpeed, setReplaySpeed] = useState(15);
+  const [autoPost, setAutoPost] = useState(true);
+  const [watcherBusy, setWatcherBusy] = useState(false);
+  // Code redemption (simulated point-of-sale)
+  const [redeemInput, setRedeemInput] = useState("");
+  const [redeemResult, setRedeemResult] = useState<string | null>(null);
+  const [redeeming, setRedeeming] = useState(false);
 
   const fetchEvents = useCallback(async () => {
     const res = await fetch("/api/events");
@@ -90,13 +127,89 @@ export default function DashboardPage() {
     setPosts(data.posts ?? []);
   }, []);
 
+  const fetchWatcher = useCallback(async () => {
+    try {
+      const res = await fetch("/api/watcher");
+      const data = await res.json();
+      setWatcher(data.status ?? null);
+      if (data.featuredReplay) setFeaturedReplay(data.featuredReplay);
+    } catch {
+      // ignore
+    }
+  }, []);
+
   useEffect(() => {
     fetchEvents();
     fetchScenarios();
     fetchPosts();
-    const t = setInterval(fetchEvents, 3000);
+    fetchWatcher();
+    const t = setInterval(() => {
+      fetchEvents();
+      fetchWatcher();
+      fetchPosts();
+    }, 3000);
     return () => clearInterval(t);
-  }, [fetchEvents, fetchScenarios, fetchPosts]);
+  }, [fetchEvents, fetchScenarios, fetchPosts, fetchWatcher]);
+
+  const handleStartReplay = async () => {
+    if (!featuredReplay) return;
+    setWatcherBusy(true);
+    try {
+      const res = await fetch("/api/watcher", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "start",
+          sport: featuredReplay.sport,
+          gameId: featuredReplay.gameId,
+          mode: "replay",
+          intervalSecs: replaySpeed,
+          autoPost,
+          label: featuredReplay.label,
+        }),
+      });
+      const data = await res.json();
+      setWatcher(data.status ?? null);
+    } finally {
+      setWatcherBusy(false);
+    }
+  };
+
+  const handleStopWatcher = async () => {
+    setWatcherBusy(true);
+    try {
+      const res = await fetch("/api/watcher", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "stop" }),
+      });
+      const data = await res.json();
+      setWatcher(data.status ?? null);
+    } finally {
+      setWatcherBusy(false);
+    }
+  };
+
+  const handleRedeem = async () => {
+    const code = redeemInput.trim();
+    if (!code || redeeming) return;
+    setRedeeming(true);
+    setRedeemResult(null);
+    try {
+      const res = await fetch("/api/codes/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, redeem: true }),
+      });
+      const data = await res.json();
+      setRedeemResult(data.valid ? `✅ ${data.message}` : `❌ ${data.message ?? "Invalid code"}`);
+      if (data.valid) setRedeemInput("");
+    } catch {
+      setRedeemResult("❌ Something went wrong");
+    } finally {
+      setRedeeming(false);
+    }
+  };
 
   useEffect(() => {
     if (events.length > 0 && !selectedEventId) setSelectedEventId(events[0].id);
@@ -228,6 +341,92 @@ export default function DashboardPage() {
       </header>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Live Game Watcher */}
+        <section className="mb-8 p-6 rounded-xl border border-[var(--card-border)] bg-[var(--card)]">
+          <h2 className="font-semibold text-white flex items-center gap-2 mb-1">
+            <Radio className="w-5 h-5 text-red-500" />
+            Live Game Watcher
+            {watcher?.running && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 animate-pulse">
+                ● LIVE
+              </span>
+            )}
+          </h2>
+          <p className="text-sm text-zinc-500 mb-4">
+            Streams real ESPN play-by-play into your campaigns — every touchdown,
+            field goal, and interception auto-triggers an event{autoPost ? " and posts the story" : ""}.
+          </p>
+          {watcher?.running ? (
+            <div className="space-y-3">
+              <div className="text-sm text-white">
+                <span className="text-zinc-400">Watching:</span>{" "}
+                {watcher.config?.label ?? `${watcher.config?.sport?.toUpperCase()} game ${watcher.config?.gameId}`}{" "}
+                <span className="text-zinc-500">
+                  ({watcher.config?.mode}, every {watcher.config?.intervalSecs}s
+                  {watcher.config?.autoPost ? ", auto-posting" : ""})
+                </span>
+              </div>
+              <div className="text-sm text-zinc-400">
+                Moments fired: <span className="text-white font-semibold">{watcher.emittedCount}</span>
+                {watcher.queueRemaining !== null && (
+                  <> · remaining: <span className="text-white font-semibold">{watcher.queueRemaining}</span></>
+                )}
+              </div>
+              {watcher.lastEvent && (
+                <p className="text-sm text-emerald-400 line-clamp-2">{watcher.lastEvent.description}</p>
+              )}
+              {watcher.lastError && (
+                <p className="text-sm text-amber-400">{watcher.lastError}</p>
+              )}
+              <button
+                onClick={handleStopWatcher}
+                disabled={watcherBusy}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600 text-white font-medium hover:bg-red-500 disabled:opacity-50 transition-colors"
+              >
+                Stop watching
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-end gap-4">
+              <div>
+                <label className="block text-sm font-medium text-zinc-400 mb-2">
+                  Moment interval
+                </label>
+                <select
+                  value={replaySpeed}
+                  onChange={(e) => setReplaySpeed(Number(e.target.value))}
+                  className="px-4 py-2.5 rounded-lg bg-black/40 border border-[var(--card-border)] text-white focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                >
+                  <option value={10}>Every 10s (fast demo)</option>
+                  <option value={15}>Every 15s</option>
+                  <option value={30}>Every 30s</option>
+                  <option value={60}>Every 60s</option>
+                </select>
+              </div>
+              <label className="flex items-center gap-2 text-sm text-zinc-300 pb-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={autoPost}
+                  onChange={(e) => setAutoPost(e.target.checked)}
+                  className="w-4 h-4 accent-[var(--accent)]"
+                />
+                Auto-post stories (AI captions)
+              </label>
+              <button
+                onClick={handleStartReplay}
+                disabled={watcherBusy || !featuredReplay}
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-red-600 text-white font-medium hover:bg-red-500 disabled:opacity-50 transition-colors"
+              >
+                <Radio className="w-5 h-5" />
+                {watcherBusy ? "Starting…" : `▶ Replay ${featuredReplay?.label ?? "Super Bowl LX"}`}
+              </button>
+              {watcher?.lastError && (
+                <p className="text-sm text-amber-400 w-full">{watcher.lastError}</p>
+              )}
+            </div>
+          )}
+        </section>
+
         {/* Simulate Event */}
         <section className="mb-8 p-6 rounded-xl border border-[var(--card-border)] bg-[var(--card)]">
           <div className="flex flex-wrap items-end gap-4">
@@ -412,6 +611,37 @@ export default function DashboardPage() {
           </section>
         </div>
 
+        {/* Redeem a code (simulated point-of-sale) */}
+        <section className="mb-8 p-6 rounded-xl border border-[var(--card-border)] bg-[var(--card)]">
+          <h2 className="font-semibold text-white flex items-center gap-2 mb-1">
+            <Tag className="w-5 h-5 text-emerald-500" />
+            Redeem a code
+          </h2>
+          <p className="text-sm text-zinc-500 mb-4">
+            Simulates the register: paste a customer&apos;s code to validate and mark
+            it redeemed. Redemptions feed the ROI stats on each post.
+          </p>
+          <div className="flex flex-wrap gap-3 items-center">
+            <input
+              type="text"
+              value={redeemInput}
+              onChange={(e) => setRedeemInput(e.target.value.toUpperCase())}
+              placeholder="e.g. GOLD50-X7K2"
+              className="px-4 py-2.5 rounded-lg bg-black/40 border border-[var(--card-border)] text-white font-mono placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+            />
+            <button
+              onClick={handleRedeem}
+              disabled={redeeming || !redeemInput.trim()}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-emerald-600 text-white font-medium hover:bg-emerald-500 disabled:opacity-50 transition-colors"
+            >
+              {redeeming ? "Checking…" : "Validate & redeem"}
+            </button>
+            {redeemResult && (
+              <span className="text-sm text-zinc-300">{redeemResult}</span>
+            )}
+          </div>
+        </section>
+
         {/* Past posts — grid + detail modal */}
         {postSuccessMessage && (
           <p className="mb-4 text-center text-sm font-medium text-emerald-400">
@@ -483,9 +713,15 @@ export default function DashboardPage() {
                         <Users className="w-5 h-5 text-[var(--accent)]" />
                       </div>
                       <div>
-                        <p className="font-medium">Users interacted</p>
+                        <p className="font-medium">Replies</p>
                         <p className="text-2xl font-bold">
                           {postStats.interactions}
+                        </p>
+                        <p className="text-xs text-zinc-500">
+                          {postStats.uniqueUsers} unique{" "}
+                          {postStats.uniqueUsers === 1 ? "customer" : "customers"}
+                          {postStats.medianReplyLatencySecs !== null &&
+                            ` · median reply ${postStats.medianReplyLatencySecs}s`}
                         </p>
                       </div>
                     </div>
@@ -494,13 +730,15 @@ export default function DashboardPage() {
                         <Gift className="w-5 h-5 text-emerald-500" />
                       </div>
                       <div>
-                        <p className="font-medium">Got discount (replied)</p>
+                        <p className="font-medium">Codes issued</p>
                         <p className="text-2xl font-bold">
                           {postStats.gotDiscount}
                         </p>
                         <p className="text-xs text-zinc-500">
-                          {postStats.winCount} on time (GOLD50) ·{" "}
-                          {postStats.lateCount} late (SILVER10)
+                          {postStats.winCount} gold (50%) ·{" "}
+                          {postStats.lateCount} silver (10%)
+                          {postStats.goldCap &&
+                            ` · gold cap ${postStats.goldCap.used}/${postStats.goldCap.total}`}
                         </p>
                       </div>
                     </div>
@@ -509,17 +747,17 @@ export default function DashboardPage() {
                         <Tag className="w-5 h-5 text-amber-500" />
                       </div>
                       <div>
-                        <p className="font-medium">Promo code used</p>
-                        <p className="text-sm">
-                          GOLD50:{" "}
-                          <span className="font-bold text-emerald-400">
-                            {postStats.usedPromoCode.GOLD50}
+                        <p className="font-medium">Redeemed at register</p>
+                        <p className="text-2xl font-bold">
+                          {postStats.redeemed.total}
+                          <span className="text-sm font-normal text-zinc-500">
+                            {" "}
+                            ({postStats.redemptionRatePct}% of issued)
                           </span>
-                          {" · "}
-                          SILVER10:{" "}
-                          <span className="font-bold text-zinc-400">
-                            {postStats.usedPromoCode.SILVER10}
-                          </span>
+                        </p>
+                        <p className="text-xs text-zinc-500">
+                          gold {postStats.redeemed.gold} · silver{" "}
+                          {postStats.redeemed.silver}
                         </p>
                       </div>
                     </div>

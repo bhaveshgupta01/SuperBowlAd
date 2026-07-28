@@ -6,8 +6,14 @@ Built with Next.js 14 (App Router), TypeScript, Tailwind CSS, and Lucide React. 
 
 ## Purpose
 
-- **For business owners:** run "reply within N seconds" discount campaigns triggered by live sports events, without writing code.
-- **For customers:** reply to a story within the time window (default 45 seconds) and instantly receive a discount code — fast replies get the premium code (`GOLD50`), late replies get the consolation code (`SILVER10`).
+- **For business owners:** run "reply within N seconds" discount campaigns triggered by live sports events, without writing code. The **Live Game Watcher** streams real ESPN play-by-play (touchdowns, field goals, interceptions) into campaigns and can auto-post AI-captioned stories the moment they happen.
+- **For customers:** reply to a story within the time window (default 45 seconds from when the story posts) and instantly receive a discount code.
+
+### Campaign rules (per scenario, owner-configurable)
+
+- The first **10** in-window replies win a **GOLD** code (50% off); everyone else gets **SILVER** (10% off) — the gold cap turns discounts into a fixed promo budget.
+- **One play per customer per event** — repeat replies return the original code.
+- Every code is **unique** (`GOLD50-X7K2`) and **expires in 24h**; the dashboard's redeem box validates and marks codes redeemed, feeding per-post ROI stats.
 
 ## Quick start (zero config)
 
@@ -18,11 +24,15 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000). No `.env.local`, database, or API keys needed — the core flow runs entirely in memory.
 
-### The 3-step demo flow
+### The one-button live demo
 
-1. Open **[/dashboard](http://localhost:3000/dashboard)** → pick an event (e.g. "Touchdown - Chiefs") → **Simulate Event** → **Generate Post** → **Post to Instagram**.
-2. Open **[/simulation](http://localhost:3000/simulation)** in a second tab → a "New Story! Reply now!" toast appears within ~2 seconds of the event.
-3. Type any reply in the chat. Within 45 seconds of the event → **GOLD50**. Later → **SILVER10**. Click a past post on the dashboard to see its stats (interactions, win/late split).
+Open **[/dashboard](http://localhost:3000/dashboard)** → **▶ Replay Super Bowl LX**. The watcher replays the real game's play-by-play (from ESPN), auto-posting an AI-captioned story for each campaign moment. Open **[/simulation](http://localhost:3000/simulation)** in a second tab, wait for the toast, and reply fast to win a gold code. Paste the code into the dashboard's **Redeem a code** box to complete the funnel, then click the post to see ROI stats.
+
+### The manual 3-step flow (still works)
+
+1. **/dashboard** → pick an event (e.g. "Touchdown - Chiefs") → **Simulate Event** → **Generate Post** → **Post to Instagram**.
+2. **/simulation** in a second tab → a "New Story! Reply now!" toast appears within ~2 seconds.
+3. Reply in the chat: in-window → unique GOLD code, late → SILVER. Click a past post on the dashboard for stats.
 
 ## Pages
 
@@ -46,10 +56,12 @@ Open [http://localhost:3000](http://localhost:3000). No `.env.local`, database, 
 | `POST /api/generate-post` | Prompt + caption for an event (Gemini when `GEMINI_API_KEY` set, templates otherwise) |
 | `GET/POST /api/posts` | List / create posts; newest post becomes the "active" one |
 | `GET /api/posts/[id]/stats` | Per-post interactions, win/late counts, code usage |
-| `POST /api/instagram-webhook` | Simulated DM webhook → `evaluateBet()` → discount code |
+| `POST /api/instagram-webhook` | Simulated DM webhook → timing + cap evaluation → unique discount code |
+| `GET/POST /api/watcher` | Game watcher: stream real ESPN play-by-play (live) or replay a finished game into the campaign flow, with optional auto-posting |
+| `POST /api/codes/validate` | Validate/redeem codes (in-memory registry without Supabase, Supabase table with it) |
 | `GET /api/campaigns` | Active campaigns (falls back to in-memory scenarios without Supabase auth) |
 | `POST /api/posts/generate` | AI caption for arbitrary sport/event (Gemini with template fallback) |
-| `GET /api/sports/live` | Live games (`?sport=nfl` etc.); demo data unless real APIs enabled |
+| `GET /api/sports/live` | Live games (`?sport=nfl`; `?real=1` forces real ESPN data even in demo mode) |
 
 **Supabase-backed (need `.env.local` with Supabase keys):**
 
@@ -57,7 +69,6 @@ Open [http://localhost:3000](http://localhost:3000). No `.env.local`, database, 
 |---|---|
 | `POST/PATCH/DELETE /api/campaigns` | Campaign CRUD for the signed-in business |
 | `GET/POST /api/predictions` | Submit/list customer predictions with timing evaluation |
-| `POST /api/codes/validate` | Validate / redeem generated discount codes |
 
 ## Setup tiers
 

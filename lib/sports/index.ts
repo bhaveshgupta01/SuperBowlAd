@@ -13,9 +13,28 @@ const adapters: Record<string, SportsApiAdapter> = {
   cricket: demoDemoAdapters.cricket, // RapidAPI cricket not implemented yet
 };
 
+// Real ESPN adapters regardless of demo-mode flags — used by the game
+// watcher and the dashboard's live-game picker.
+const realAdapters: Partial<Record<string, SportsApiAdapter>> = {
+  nfl: ESPNNFLAdapter,
+  nba: ESPNNBAAdapter,
+};
+
 export async function getLiveGames(
-  sport?: "nfl" | "nba" | "soccer" | "cricket"
+  sport?: "nfl" | "nba" | "soccer" | "cricket",
+  options?: { forceReal?: boolean }
 ): Promise<LiveGame[]> {
+  if (options?.forceReal) {
+    if (sport) {
+      const adapter = realAdapters[sport];
+      return adapter ? adapter.getLiveGames() : [];
+    }
+    const all = await Promise.all(
+      Object.values(realAdapters).map((a) => a!.getLiveGames())
+    );
+    return all.flat();
+  }
+
   if (demoMode) {
     if (sport) {
       return [DEMO_GAMES[sport]];

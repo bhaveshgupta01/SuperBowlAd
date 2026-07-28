@@ -22,15 +22,27 @@ export interface BettingScenario {
   eventType: string; // e.g. "touchdown"
   active: boolean;
   createdAt: number;
+  // Campaign economics — owner-configurable per scenario
+  winWindowSecs: number; // reply window, anchored to post time
+  winnerCap: number; // first N fast replies win gold; the rest get silver
+  winCodeBase: string; // e.g. "GOLD50"
+  lateCodeBase: string; // e.g. "SILVER10"
+  winDiscountPercent: number;
+  lateDiscountPercent: number;
 }
 
 export interface UserBet {
   userId: string;
   scenarioId: string;
+  eventId: string;
   eventTime: number;
   replyTime: number;
+  latencySecs: number; // reply delay vs the window anchor (post time)
   result: "WIN" | "LATE";
-  code: string;
+  code: string; // unique per bet, e.g. GOLD50-X7K2
+  discountPercent: number;
+  expiresAt: number; // Unix seconds; invalid at redemption after this
+  redeemedAt?: number;
   createdAt: number;
   postId?: string;
 }
@@ -95,18 +107,40 @@ export function clearLatestEventForSimulation(): void {
 }
 
 // --- Betting Scenarios (Active Campaigns) ---
+const scenarioDefaults = {
+  active: true,
+  winWindowSecs: 45,
+  winnerCap: 10,
+  winCodeBase: "GOLD50",
+  lateCodeBase: "SILVER10",
+  winDiscountPercent: 50,
+  lateDiscountPercent: 10,
+};
+
 const defaultScenarios: Omit<BettingScenario, "createdAt">[] = [
-  { id: "sc_td", title: "Will they score?", description: "Reply within 45s of a touchdown", eventType: "touchdown", active: true },
-  { id: "sc_int", title: "Interception alert", description: "Reply within 45s of an interception", eventType: "interception", active: true },
+  { id: "sc_td", title: "Touchdown rush", description: "First 10 replies within 45s of a touchdown story win GOLD (50% off); everyone else gets SILVER (10%)", eventType: "touchdown", ...scenarioDefaults },
+  { id: "sc_int", title: "Interception alert", description: "First 10 replies within 45s of an interception story win GOLD (50% off); everyone else gets SILVER (10%)", eventType: "interception", ...scenarioDefaults },
+  { id: "sc_fg", title: "Field goal flash", description: "First 10 replies within 45s of a field-goal story win GOLD (50% off); everyone else gets SILVER (10%)", eventType: "field_goal", ...scenarioDefaults },
 ];
 
 function initScenarios() {
+  const now = Math.floor(Date.now() / 1000);
   if (state.bettingScenarios.length === 0) {
-    const now = Math.floor(Date.now() / 1000);
     defaultScenarios.forEach((s) => {
       state.bettingScenarios.push({ ...s, createdAt: now });
     });
+    return;
   }
+  // The globalThis store survives dev hot reloads — backfill fields added
+  // after older-shape scenarios were seeded, and add any new default scenario.
+  state.bettingScenarios.forEach((s, i) => {
+    state.bettingScenarios[i] = { ...scenarioDefaults, ...s };
+  });
+  defaultScenarios.forEach((d) => {
+    if (!state.bettingScenarios.some((s) => s.id === d.id)) {
+      state.bettingScenarios.push({ ...d, createdAt: now });
+    }
+  });
 }
 initScenarios();
 
@@ -134,6 +168,25 @@ export function getUserBets(): UserBet[] {
 
 export function getBetsForPost(postId: string): UserBet[] {
   return state.userBets.filter((b) => b.postId === postId);
+}
+
+export function findBetByUserAndEvent(userId: string, eventId: string): UserBet | null {
+  return state.userBets.find((b) => b.userId === userId && b.eventId === eventId) ?? null;
+}
+
+export function countWinsForEvent(eventId: string): number {
+  return state.userBets.filter((b) => b.eventId === eventId && b.result === "WIN").length;
+}
+
+export function findBetByCode(code: string): UserBet | null {
+  return state.userBets.find((b) => b.code.toUpperCase() === code.toUpperCase()) ?? null;
+}
+
+export function markBetRedeemed(code: string): UserBet | null {
+  const bet = findBetByCode(code);
+  if (!bet) return null;
+  bet.redeemedAt = Math.floor(Date.now() / 1000);
+  return bet;
 }
 
 // --- Posts ---
